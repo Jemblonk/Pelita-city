@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tanda Tangan Entri make.fun — Pelita City</title>
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:16px;background:#0f1115;color:#e8eaf0;line-height:1.5}
+  h1{font-size:20px;margin:0 0 8px}
+  p{margin:8px 0}
+  pre{background:#1a1d24;border:1px solid #333;padding:12px;border-radius:8px;white-space:pre-wrap;word-break:break-all;font-size:13px}
+  button{display:block;width:100%;padding:14px;margin:10px 0;font-size:16px;border:0;border-radius:10px;background:#4c6ef5;color:#fff;cursor:pointer}
+  button:disabled{background:#444;color:#aaa;cursor:default}
+  #status{background:#1a1d24;border:1px solid #333;padding:10px;border-radius:8px;font-size:14px;min-height:20px}
+  #sig{width:100%;box-sizing:border-box;min-height:70px;background:#1a1d24;color:#e8eaf0;border:1px solid #333;border-radius:8px;padding:10px;font-size:13px;word-break:break-all}
+  .warn{color:#ffd166}
+  .ok{color:#7ddb8a}
+  .err{color:#ff8a8a}
+  small{color:#9aa0ad}
+</style>
+</head>
+<body>
+<h1>Tanda Tangan Entri make.fun — Pelita City</h1>
+<p>Halaman ini <b>hanya</b> meminta tanda tangan pesan (off-chain). Tidak ada transaksi, tidak ada perpindahan dana, dan halaman ini <b>tidak pernah</b> meminta seed phrase atau password.</p>
+<p class="warn">Sebelum approve di wallet: periksa teks pada prompt wallet <b>sama persis</b> dengan teks di bawah. Kalau yang muncul justru permintaan transaksi, JANGAN approve.</p>
+<p>Pesan yang akan ditandatangani (persis, jangan diubah):</p>
+<pre id="msg"></pre>
+<p id="status">Menunggu…</p>
+<button id="btnConnect">1. Hubungkan Wallet</button>
+<button id="btnSign" disabled>2. Tanda Tangani Pesan</button>
+<p>Tanda tangan (base58) — salin dan kirim ke chat:</p>
+<textarea id="sig" readonly placeholder="Tanda tangan akan muncul di sini setelah approve"></textarea>
+<button id="btnCopy" disabled>Salin Tanda Tangan</button>
+<button id="btnRetry">Deteksi Ulang Wallet</button>
+<p><small>Wallet yang harus dipakai: BG37UMSDdHFzX1pWCCuPsPDKTRvgHak9hKL6LDcvK8xA. Halaman ini harus dibuka online di browser dalam aplikasi wallet (Jupiter/Solflare) atau browser dengan extension wallet, bukan dari file download.</small></p>
+<script>
+(function(){
+  "use strict";
+  var EXPECTED = "BG37UMSDdHFzX1pWCCuPsPDKTRvgHak9hKL6LDcvK8xA";
+  var statusEl = document.getElementById("status");
+  var btnConnect = document.getElementById("btnConnect");
+  var btnSign = document.getElementById("btnSign");
+  var btnCopy = document.getElementById("btnCopy");
+  var sigEl = document.getElementById("sig");
+  function setStatus(text, cls){
+    statusEl.textContent = text;
+    statusEl.className = cls || "";
+  }
+
+  // Freshness values arrive in the URL fragment: #n=<32-hex-nonce>&t=<issued-at>
+  var frag = (location.hash || "").replace(/^#/, "");
+  var params = {};
+  frag.split("&").forEach(function(pair){
+    var eq = pair.indexOf("=");
+    if (eq > 0) params[pair.slice(0, eq)] = decodeURIComponent(pair.slice(eq + 1));
+  });
+  var nonceOk = /^[0-9a-f]{32}$/.test(params.n || "");
+  var issuedOk = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(params.t || "");
+  if (!nonceOk || !issuedOk){
+    document.getElementById("msg").textContent = "(pesan tidak tersedia — link tidak lengkap)";
+    setStatus("Link tidak lengkap atau sudah lama. Minta link tanda tangan yang baru.", "err");
+    btnConnect.disabled = true;
+    document.getElementById("btnRetry").disabled = true;
+    return;
+  }
+  var LINES = [
+    "make.fun entry v1",
+    "Domain: make.fun",
+    "Competition: gta6-01",
+    "Repo: https://github.com/Jemblonk/Pelita-city",
+    "Commit: b2ce5b1db9c09a207e15b524a467cd6b7d7d8fc6",
+    "Transcripts: 5972d4a10808cca2ffd892f5c9cb8b48f45efd9dac01ae69b8a43d665c0a6a29",
+    "Wallet: BG37UMSDdHFzX1pWCCuPsPDKTRvgHak9hKL6LDcvK8xA",
+    "Nonce: " + params.n,
+    "Issued At: " + params.t
+  ];
+  var MESSAGE = LINES.join("\n");
+  document.getElementById("msg").textContent = MESSAGE;
+
+  var ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  function b58encode(bytes){
+    var digits = [0];
+    for (var i = 0; i < bytes.length; i++){
+      var carry = bytes[i];
+      for (var j = 0; j < digits.length; j++){
+        carry += digits[j] << 8;
+        digits[j] = carry % 58;
+        carry = (carry / 58) | 0;
+      }
+      while (carry > 0){ digits.push(carry % 58); carry = (carry / 58) | 0; }
+    }
+    var out = "";
+    for (var k = 0; k < bytes.length && bytes[k] === 0; k++) out += "1";
+    for (var m = digits.length - 1; m >= 0; m--) out += ALPHABET[digits[m]];
+    return out;
+  }
+  function toBytes(v){
+    if (v instanceof Uint8Array) return v;
+    if (Array.isArray(v)) return new Uint8Array(v);
+    if (v && v.buffer instanceof ArrayBuffer) return new Uint8Array(v.buffer, v.byteOffset || 0, v.byteLength);
+    return null;
+  }
+  function addrOf(account){
+    if (!account) return "";
+    var a = account.address;
+    if (typeof a === "string") return a;
+    var b = toBytes(a);
+    return b ? b58encode(b) : "";
+  }
+
+  var found = [];
+  function addWallet(w){
+    if (!w || !w.features) return;
+    if (found.indexOf(w) !== -1) return;
+    found.push(w);
+  }
+  function handleRegisterEvent(e){
+    try{
+      var d = e && e.detail;
+      if (!d || typeof d !== "object") return;
+      if (d.features) addWallet(d);
+      if (d.wallet && d.wallet.features) addWallet(d.wallet);
+      if (typeof d.register === "function"){
+        d.register(function(w){ addWallet(w); });
+      }
+    }catch(err){}
+  }
+  window.addEventListener("wallet-standard:register-wallet", handleRegisterEvent);
+  try{ window.dispatchEvent(new CustomEvent("wallet-standard:app-ready")); }catch(err){}
+  function collectStandardWallets(){
+    return new Promise(function(resolve){
+      try{
+        var nav = window.navigator;
+        if (nav && nav.wallets && typeof nav.wallets.get === "function"){
+          var list = nav.wallets.get();
+          if (list && typeof list.then === "function"){
+            list.then(function(ws){ (ws||[]).forEach(addWallet); }).catch(function(){});
+          } else if (Array.isArray(list)){
+            list.forEach(addWallet);
+          }
+        }
+      }catch(err){}
+      setTimeout(resolve, 1200);
+    });
+  }
+  function legacyProvider(){
+    try{
+      if (window.solana && window.solana.signMessage) return window.solana;
+      if (window.phantom && window.phantom.solana && window.phantom.solana.signMessage) return window.phantom.solana;
+    }catch(err){}
+    return null;
+  }
+  function pickWallet(){
+    var withSign = found.filter(function(w){
+      var f = w.features || {};
+      return f["solana:signMessage"];
+    });
+    if (!withSign.length) return null;
+    var jup = withSign.filter(function(w){ return /jupiter/i.test(w.name || ""); });
+    return jup[0] || withSign[0];
+  }
+
+  var mode = null; // {kind:'standard', wallet, account} | {kind:'legacy', provider}
+  btnConnect.addEventListener("click", function(){
+    setStatus("Mencari wallet…", "");
+    btnConnect.disabled = true;
+    collectStandardWallets().then(function(){
+      var w = pickWallet();
+      if (w){
+        var connect = w.features["standard:connect"];
+        var done = function(accounts){
+          var list = accounts && accounts.accounts ? accounts.accounts : accounts;
+          if (!Array.isArray(list) || !list.length){
+            setStatus("Wallet terhubung tapi tidak ada akun. Coba lagi.", "err");
+            btnConnect.disabled = false;
+            return;
+          }
+          var acc = null;
+          for (var i = 0; i < list.length; i++){
+            var chains = list[i].chains || [];
+            if (chains.indexOf("solana:mainnet") !== -1){ acc = list[i]; break; }
+          }
+          acc = acc || list[0];
+          var addr = addrOf(acc);
+          if (!addr){
+            setStatus("Alamat wallet tidak terbaca. Coba deteksi ulang.", "err");
+            btnConnect.disabled = false;
+            return;
+          }
+          if (addr !== EXPECTED){
+            setStatus("Terhubung ke " + addr + " — BUKAN wallet yang diminta (" + EXPECTED + "). Ganti wallet ke alamat yang benar, lalu hubungkan ulang.", "err");
+            btnConnect.disabled = false;
+            return;
+          }
+          mode = {kind: "standard", wallet: w, account: acc};
+          setStatus("Terhubung: " + addr + " ✓. Lanjut ke langkah 2.", "ok");
+          btnSign.disabled = false;
+        };
+        try{
+          var res = connect.connect();
+          if (res && typeof res.then === "function") res.then(done, function(err){
+            setStatus("Koneksi ditolak atau gagal: " + (err && err.message ? err.message : err), "err");
+            btnConnect.disabled = false;
+          });
+          else done(res);
+        }catch(err){
+          setStatus("Koneksi gagal: " + err.message, "err");
+          btnConnect.disabled = false;
+        }
+        return;
+      }
+      var prov = legacyProvider();
+      if (prov){
+        var finish = function(){
+          var pk = prov.publicKey;
+          var addr = pk && pk.toBase58 ? pk.toBase58() : (typeof pk === "string" ? pk : "");
+          if (addr && addr !== EXPECTED){
+            setStatus("Terhubung ke " + addr + " — BUKAN wallet yang diminta (" + EXPECTED + "). Ganti wallet, lalu hubungkan ulang.", "err");
+            btnConnect.disabled = false;
+            return;
+          }
+          mode = {kind: "legacy", provider: prov};
+          setStatus("Terhubung: " + (addr || "(alamat tidak terbaca)") + ". Lanjut ke langkah 2.", "ok");
+          btnSign.disabled = false;
+        };
+        try{
+          var c = prov.connect();
+          if (c && typeof c.then === "function") c.then(finish, function(err){
+            setStatus("Koneksi ditolak atau gagal: " + (err && err.message ? err.message : err), "err");
+            btnConnect.disabled = false;
+          });
+          else finish();
+        }catch(err){
+          setStatus("Koneksi gagal: " + err.message, "err");
+          btnConnect.disabled = false;
+        }
+        return;
+      }
+      setStatus("Wallet tidak ditemukan. Halaman ini harus dibuka online di browser dalam aplikasi wallet (Jupiter/Solflare) atau browser dengan extension wallet — bukan dari file download.", "err");
+      btnConnect.disabled = false;
+    });
+  });
+
+  btnSign.addEventListener("click", function(){
+    if (!mode) return;
+    setStatus("Meminta tanda tangan di wallet… periksa teksnya sama persis, lalu approve.", "");
+    btnSign.disabled = true;
+    var bytes = new TextEncoder().encode(MESSAGE);
+    var showSig = function(sigBytes){
+      var b = toBytes(sigBytes);
+      if (!b || b.length !== 64){
+        setStatus("Tanda tangan tidak valid (panjang " + (b ? b.length : 0) + " byte). Coba lagi.", "err");
+        btnSign.disabled = false;
+        return;
+      }
+      var s = b58encode(b);
+      sigEl.value = s;
+      btnCopy.disabled = false;
+      setStatus("Berhasil! Salin tanda tangan di bawah dan kirim ke chat SECEPATNYA (pesan berlaku 10 menit).", "ok");
+    };
+    var onErr = function(err){
+      setStatus("Penandatanganan gagal/ditolak: " + (err && err.message ? err.message : err) + ". Coba lagi.", "err");
+      btnSign.disabled = false;
+    };
+    try{
+      if (mode.kind === "standard"){
+        var signFn = mode.wallet.features["solana:signMessage"].signMessage;
+        var out = signFn({ account: mode.account, message: bytes });
+        Promise.resolve(out).then(function(res){
+          var arr = Array.isArray(res) ? res : [res];
+          showSig(arr[0] && arr[0].signature);
+        }, onErr);
+      } else {
+        var out2 = mode.provider.signMessage(bytes);
+        Promise.resolve(out2).then(function(res){
+          showSig(res && res.signature);
+        }, onErr);
+      }
+    }catch(err){ onErr(err); }
+  });
+
+  btnCopy.addEventListener("click", function(){
+    var done = function(){ setStatus("Tersalin. Paste ke chat sekarang.", "ok"); };
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(sigEl.value).then(done, function(){
+        sigEl.select(); document.execCommand("copy"); done();
+      });
+    } else {
+      sigEl.select(); document.execCommand("copy"); done();
+    }
+  });
+
+  document.getElementById("btnRetry").addEventListener("click", function(){
+    found = [];
+    try{ window.dispatchEvent(new CustomEvent("wallet-standard:app-ready")); }catch(err){}
+    setStatus("Mencoba deteksi ulang… tap 'Hubungkan Wallet' lagi.", "");
+    btnConnect.disabled = false;
+  });
+
+  setStatus("Siap. Tap 'Hubungkan Wallet'. Pastikan halaman ini dibuka online di browser dalam aplikasi wallet.", "");
+})();
+</script>
+</body>
+</html>
